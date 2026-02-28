@@ -1,0 +1,257 @@
+---
+title: "Full Market Value NYC"
+output: html_document
+---
+
+
+
+```{r, include = FALSE} 
+library(tidyverse)
+library(tinytex)
+library(GGally)
+library(broom)
+library(dplyr)
+library(boot)
+library(ggplot2)
+library(pander)
+```
+
+```{r, echo=TRUE, include=TRUE}
+nyCondos <- read.csv("nyc-condos_s24.csv")
+```
+
+
+```{r, echo=TRUE, include=TRUE}
+##This code block creates a new table that adds a new column of the logarithm of Full.Market.Value, and gets rid of the columns: Address, Boro.Block.Lot, Condo.Section, Neighborhood, Building.Classification, and Full.Market.Value.
+newNYCondos <- nyCondos %>% 
+  mutate(Log.Full.Market.Value= log(nyCondos$Full.Market.Value))
+newNYCondos <- newNYCondos %>% select(-one_of('Address', 'Boro.Block.Lot', 'Condo.Section', 'Neighborhood', 'Building.Classification', 'Full.Market.Value'))
+
+```
+
+
+
+
+```{r, echo=TRUE, include=TRUE}
+## Shows the correlations between the Full Market Value and all potential predictors.
+ogLogPlots <- nyCondos %>% select(Full.Market.Value, Total.Units, Year.Built, Gross.SqFt, Estimated.Gross.Income, Gross.Income.per.SqFt, Estimated.Expense, Expense.per.SqFt, Net.Operating.Income, Market.Value.per.SqFt, Report.Year) %>% ggpairs()
+
+```
+
+
+```{r, echo=TRUE, include=TRUE, message=FALSE, warning=FALSE}
+##Shows the correlations between the Log Full Market Value and all potential predictors.
+logPlots <- newNYCondos %>% select(Log.Full.Market.Value, Total.Units, Year.Built, Gross.SqFt, Estimated.Gross.Income, Gross.Income.per.SqFt, Estimated.Expense, Expense.per.SqFt, Net.Operating.Income, Market.Value.per.SqFt, Report.Year) %>% ggpairs()
+logPlots
+```
+
+
+
+
+```{r, echo=TRUE, include=TRUE, message=FALSE, warning=FALSE}
+##Displays the image of the scatterplot matrix containing final predictor and outcome variables. A better image is the one we showed above.
+logPlots2 <- newNYCondos %>% select(Log.Full.Market.Value, Gross.SqFt, Gross.Income.per.SqFt, Estimated.Gross.Income) %>% ggpairs() + ggtitle("Graphical Array 1.", subtitle = "Scatterplot matrix containing final model variables and outcome variable.")
+logPlots2
+```
+
+
+
+```{r, echo=TRUE, include=TRUE, message=FALSE, warning=FALSE}
+##This is a pander package that allowed us to see the summary and ANOVA test in neat tables.
+mlr1 <- lm(Log.Full.Market.Value ~ log(Gross.SqFt) + Gross.Income.per.SqFt, data= newNYCondos)
+
+pander::pander(summary(mlr1), caption = "Summary of MLR")
+pander(anova(mlr1))
+
+```
+
+
+
+
+```{r, echo=TRUE, include=TRUE}
+##Demonstrates the histogram of Full Market Value and shows strong skew.
+posSkewFullMark <- nyCondos %>% ggplot(aes(x = Full.Market.Value)) + geom_histogram(bins=20) + theme_bw() + labs(title="Histogram of Full Market Value", x="Full Market Value", y="Frequency")
+posSkewFullMark
+```
+
+
+```{r, echo=TRUE, include=TRUE}
+##Normal look of the Full Market Value using the log transformation.
+
+normFull.Market <- nyCondos %>% ggplot(aes(x = log(Full.Market.Value))) + geom_histogram(bins=20) + theme_bw() + labs(title="Histogram of Log Full Market Value", x="Full Market Value", y="Frequency")
+normFull.Market
+```
+
+
+
+```{r, echo=TRUE, message=FALSE, include=TRUE}
+## Start with intercept-only model, forward variable selection method.
+null <- lm(Log.Full.Market.Value ~ 1, data = newNYCondos)
+full <- lm(Log.Full.Market.Value ~ ., data = newNYCondos)
+forward <- step(null, scope = list(lower=null, upper = full),
+data = newNYCondos,
+direction = "forward",
+k = 2, ## k=2 specifies using AIC as criterion
+trace = F) ## do not show intermediate steps;
+## set trace = T to see which variables are added at each step
+forward
+```
+
+
+```{r, echo=TRUE, include=TRUE}
+ ## Start with full model, backward variable selection method.
+backward <- step(full, data = data, direction = "backward", k = 2, trace = F)
+backward
+##This is the selected method for this report.
+```
+
+
+```{r, echo=TRUE, include=TRUE}
+##Stepwise variable selection method.
+stepwise <- step(full, data = newNYCondos, direction = "both", k = 2, trace = F)
+stepwise
+```
+
+```{r, echo=TRUE, include=TRUE}
+##Subset variable selection method.
+library(leaps)
+subsets <- regsubsets(Log.Full.Market.Value ~ ., data = newNYCondos, nbest = 1)
+##names(subsets)
+
+subsets.sum <- summary(subsets)
+names(subsets.sum)
+
+data.frame(cbind(subsets.sum$which, AdjR2 = subsets.sum$adjr))
+
+
+```
+
+
+```{r, echo=TRUE, include=TRUE}
+##Lasso variable selection method.
+## This one tests the Log Full Market Value to see which predictors would be the best to use.
+library(glmnet)
+## model.matrix() creates our design matrix of predictors
+x <- model.matrix(Log.Full.Market.Value ~ ., newNYCondos)[,-1]
+## select our outcome and convert it into a vector
+## instead of a data frame
+y <- newNYCondos %>% select(Log.Full.Market.Value) %>% unlist() %>% as.numeric()
+## fit lasso for a range of lambda values (lambda is the tuning parameter
+## that controls shrinkage)
+cv.out <- cv.glmnet(x, y, alpha = 1)
+## pick out the optimal lambda
+bestlam <- cv.out$lambda.min
+## get coefficients from the Lasso model
+lasso <- as.matrix(coef(cv.out, s = bestlam))
+t(lasso)
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+```{r, echo=TRUE, include=TRUE}
+##This shows a scatterplot of the fitted vs. residuals and this test the equal variance assumption. No trend in variability of the residuals that relates to the outcome of predictors.
+resid <- resid(mlr1)
+fitted <- fitted(mlr1)
+newNYCondos %>% ggplot(aes(x = fitted, y = resid)) + geom_point() + labs(title="Scatterplot of Residuals vs Fitted", x="Fitted", y="Residuals")
+```
+
+
+
+```{r, echo=TRUE, include=TRUE}
+##Testing the normality assumption with a histogram of residuals, looking for a normal distribution. Found it to be unimodel and symmetric around zero.
+residual_hist <- newNYCondos %>% ggplot(aes(x = resid)) + geom_histogram() +
+   theme_bw() +
+   labs(title="Histogram of Residuals")
+residual_hist
+```
+
+
+
+```{r, echo=TRUE, warning=FALSE, include=TRUE}
+##Conducted a bootstrap sampling distribution to construct CI for the slope estimates in the final model. This one for Log Gross Square Foot.
+set.seed(56)
+oneBoot <-  function(data, lm.object)
+ {
+## Randomly sample the row indices to decide which observations
+## are in our bootstrap sample
+      keep <- sample(1:nrow(data),nrow(data),replace=T)
+     ## Now use the subset command to elect those rows from the
+     ## original data; this is our bootstrap sample:
+     boot.data <- data[keep, ]
+     ## Refit the model using the bootstrap sample; note the use
+     ## of the update() command
+     boot.fit <- update(lm.object, data = boot.data)
+     ## Save the regression estimates as boot.beta
+     boot.beta <-  boot.fit$coeff
+     return(boot.beta)
+}
+betasBoot <- replicate(1000, oneBoot(data = newNYCondos, lm.object = mlr1))
+
+slopesBoot <- betasBoot[2,]
+
+data.frame(slopesBoot) %>% ggplot(aes(x = slopesBoot)) +
+     geom_histogram() +
+     labs(title = "Histogram of Bootstrap Estimates for Log Gross Square Foot",
+          x = expression(beta[1]),
+          y = "Count")
+bootCI <- quantile(slopesBoot, c(0.025, 0.975), na.rm = TRUE)
+print(bootCI)
+
+```
+
+
+```{r, echo=TRUE, warning=FALSE, include=TRUE}
+##Conducted a bootstrap sampling distribution to construct CI for the slope estimates in the final model. This one for Gross Income per Square Foot.
+set.seed(56)
+oneBoot <-  function(data, lm.object)
+ {
+## Randomly sample the row indices to decide which observations
+## are in our bootstrap sample
+      keep <- sample(1:nrow(data),nrow(data),replace=T)
+     ## Now use the subset command to elect those rows from the
+     ## original data; this is our bootstrap sample:
+     boot.data <- data[keep, ]
+     ## Refit the model using the bootstrap sample; note the use
+     ## of the update() command
+     boot.fit <- update(lm.object, data = boot.data)
+     ## Save the regression estimates as boot.beta
+     boot.beta <-  boot.fit$coeff
+     return(boot.beta)
+}
+betasBoot <- replicate(1000, oneBoot(data = newNYCondos, lm.object = mlr1))
+
+slopesBoot <- betasBoot[3,]
+
+data.frame(slopesBoot) %>% ggplot(aes(x = slopesBoot)) +
+     geom_histogram() +
+     labs(title = "Histogram of Bootstrap Estimates for Gross Income per Square Foot",
+          x = expression(beta[2]),
+          y = "Count")
+bootCI <- quantile(slopesBoot, c(0.025, 0.975), na.rm = TRUE)
+print(bootCI)
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
